@@ -1,4 +1,4 @@
-name: AI Code Review
+name: Gemini AI Code Review
 
 on:
   pull_request:
@@ -10,6 +10,7 @@ jobs:
     permissions:
       pull-requests: write
       contents: read
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
@@ -23,27 +24,43 @@ jobs:
           head -n 2000 diff.txt > diff_limited.txt
 
       - name: Gemini AI Review
-        id: gemini
         run: |
-          DIFF_JSON=$(jq -R -s '.' diff_limited.txt)  # transforma diff em string JSON segura
+          DIFF=$(cat diff_limited.txt)
+
+          PAYLOAD=$(jq -n --arg diff "$DIFF" '{
+            contents: [{
+              role: "user",
+              parts: [{
+                text: (
+                  "Você está participando do desafio acadêmico \"O Ataque ao GNews\".\n\n" +
+                  "Analise o DIFF abaixo e responda OBJETIVAMENTE:\n" +
+                  "1. Existe vulnerabilidade de SQL Injection?\n" +
+                  "2. Aponte exatamente o trecho vulnerável.\n" +
+                  "3. Explique por que é inseguro.\n" +
+                  "4. Sugira a correção usando PreparedStatement ou JdbcTemplate seguro.\n\n" +
+                  "DIFF:\n" + $diff
+                )
+              }]
+            }],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 1024
+            }
+          }')
+
           RESPONSE=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${{ secrets.AI_API_KEY }}" \
             -H "Content-Type: application/json" \
-            -d "{
-                  \"prompt\": \"Aja como Engenheiro de Segurança Sênior (DevSecOps). Analise o diff abaixo buscando vulnerabilidades OWASP Top 10, code smells, complexidade ciclomática e melhores práticas Java/Spring Boot. Retorne comentários concisos:\n$DIFF_JSON\",
-                  \"temperature\": 0.5,
-                  \"maxOutputTokens\": 1024
-                }")
-          echo "$RESPONSE" > review_output.txt
-          cat review_output.txt
+            -d "$PAYLOAD")
+
+          echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > review.txt
 
       - name: Comment on PR
         run: |
-          BODY="💡 **Gemini AI Code Review:**\n\`\`\`\n$(cat review_output.txt)\n\`\`\`"
+          BODY=$(cat review.txt | jq -Rs .)
+
           curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            -d "{\"body\": $(
-              jq -Rn --arg body "$BODY" '$body'
-            )}"
+            -d "{\"body\": $BODY}"
