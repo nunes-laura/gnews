@@ -1,4 +1,4 @@
-name: AI Code Review
+name: Gemini AI Code Review
 
 on:
   pull_request:
@@ -21,15 +21,16 @@ jobs:
         run: |
           git fetch origin main
           git diff origin/main > diff.txt
-          # Limita para não estourar tokens
-          head -n 2000 diff.txt > diff_limited.txt
+          # Limita para evitar excesso de tokens (ajuste conforme necessário)
+          head -n 100 diff.txt > diff_limited.txt
 
       - name: Gemini AI Review
         run: |
-          DIFF=$(cat diff_limited.txt)
+          # Escapa diff para JSON
+          DIFF_JSON=$(jq -Rs '.' diff_limited.txt)
 
           # Cria payload seguro para Gemini 2.0 Flash
-          PAYLOAD=$(jq -n --arg diff "$DIFF" '{
+          PAYLOAD=$(jq -n --arg diff "$DIFF_JSON" '{
             contents: [{
               role: "user",
               parts: [{
@@ -50,14 +51,18 @@ jobs:
             }
           }')
 
+          # Chamada da API Gemini
           RESPONSE=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${{ secrets.AI_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
+          # Salva resposta completa para debug
+          echo "$RESPONSE" > full_response.json
+          cat full_response.json
+
           # Extrai texto de forma segura
           REVIEW_OUTPUT=$(echo "$RESPONSE" | jq -r '.candidates[0].content[0].text // "Erro: sem resposta do Gemini"')
-
           echo "$REVIEW_OUTPUT" > review.txt
           cat review.txt
 
