@@ -1,4 +1,4 @@
-name: Gemini AI Code Review
+name: AI Code Review
 
 on:
   pull_request:
@@ -21,23 +21,25 @@ jobs:
         run: |
           git fetch origin main
           git diff origin/main > diff.txt
+          # Limita para não estourar tokens
           head -n 2000 diff.txt > diff_limited.txt
 
       - name: Gemini AI Review
         run: |
           DIFF=$(cat diff_limited.txt)
 
+          # Cria payload seguro para Gemini 2.0 Flash
           PAYLOAD=$(jq -n --arg diff "$DIFF" '{
             contents: [{
               role: "user",
               parts: [{
                 text: (
                   "Você está participando do desafio acadêmico \"O Ataque ao GNews\".\n\n" +
-                  "Analise o DIFF abaixo e responda OBJETIVAMENTE:\n" +
-                  "1. Existe vulnerabilidade de SQL Injection?\n" +
-                  "2. Aponte exatamente o trecho vulnerável.\n" +
-                  "3. Explique por que é inseguro.\n" +
-                  "4. Sugira a correção usando PreparedStatement ou JdbcTemplate seguro.\n\n" +
+                  "Analise o DIFF abaixo e comente sobre:\n" +
+                  "1. SQL Injection ou outras vulnerabilidades de segurança.\n" +
+                  "2. Explique o risco de forma didática.\n" +
+                  "3. Sugira a correção usando PreparedStatement ou NamedParameterJdbcTemplate.\n" +
+                  "4. Não comente falsos positivos.\n\n" +
                   "DIFF:\n" + $diff
                 )
               }]
@@ -53,12 +55,15 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
 
-          echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' > review.txt
+          # Extrai texto de forma segura
+          REVIEW_OUTPUT=$(echo "$RESPONSE" | jq -r '.candidates[0].content[0].text // "Erro: sem resposta do Gemini"')
+
+          echo "$REVIEW_OUTPUT" > review.txt
+          cat review.txt
 
       - name: Comment on PR
         run: |
           BODY=$(cat review.txt | jq -Rs .)
-
           curl -s -X POST \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
