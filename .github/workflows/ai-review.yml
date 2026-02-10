@@ -1,0 +1,76 @@
+name: Gemini AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Capture PR Diff
+        run: |
+          git fetch origin main
+          git diff origin/main > diff.txt
+          # Limita para evitar excesso de tokens (ajuste conforme necessário)
+          head -n 100 diff.txt > diff_limited.txt
+
+      - name: Gemini AI Review
+        run: |
+          # Escapa diff para JSON
+          DIFF_JSON=$(jq -Rs '.' diff_limited.txt)
+
+          # Cria payload seguro para Gemini 2.0 Flash
+          PAYLOAD=$(jq -n --arg diff "$DIFF_JSON" '{
+            contents: [{
+              role: "user",
+              parts: [{
+                text: (
+                  "Você está participando do desafio acadêmico \"O Ataque ao GNews\".\n\n" +
+                  "Analise o DIFF abaixo e comente sobre:\n" +
+                  "1. SQL Injection ou outras vulnerabilidades de segurança.\n" +
+                  "2. Explique o risco de forma didática.\n" +
+                  "3. Sugira a correção usando PreparedStatement ou NamedParameterJdbcTemplate.\n" +
+                  "4. Não comente falsos positivos.\n\n" +
+                  "DIFF:\n" + $diff
+                )
+              }]
+            }],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 1024
+            }
+          }')
+
+          # Chamada da API Gemini
+          RESPONSE=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${{ secrets.AI_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          # Salva resposta completa para debug
+          echo "$RESPONSE" > full_response.json
+          cat full_response.json
+
+          # Extrai texto de forma segura
+          REVIEW_OUTPUT=$(echo "$RESPONSE" | jq -r '.candidates[0].content[0].text // "Erro: sem resposta do Gemini"')
+          echo "$REVIEW_OUTPUT" > review.txt
+          cat review.txt
+
+      - name: Comment on PR
+        run: |
+          BODY=$(cat review.txt | jq -Rs .)
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            -d "{\"body\": $BODY}"
