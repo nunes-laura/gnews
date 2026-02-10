@@ -1,4 +1,4 @@
-name: AI Code Review (Baixo Custo)
+name: AI Code Review
 
 on:
   pull_request:
@@ -8,27 +8,42 @@ jobs:
   review:
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: write
       contents: read
-      pull-requests: write  # Necessário para comentar no PR
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: AI Reviewer
-        uses: anc95/ChatGPT-CodeReview@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.AI_API_KEY }}
-          LANGUAGE: Portuguese
-          MODEL: gpt-3.5-turbo          # Modelo barato e rápido
-          TEMPERATURE: 0.5               # Mais conservador, respostas objetivas
-          MAX_TOKENS: 1024               # Limite de tokens para economizar
-          PROMPT: |
-            Aja como um Engenheiro de Segurança Sênior (DevSecOps).
-            Analise o DIFF deste Pull Request buscando:
-            1. Vulnerabilidades OWASP Top 10 (ex: SQL Injection, Insecure Deserialization)
-            2. Code smells e complexidade ciclomática desnecessária
-            3. Aderência às melhores práticas de Java 25 e Spring Boot 3.4
-            4. Responda com comentários técnicos e construtivos diretamente nas linhas do código afetado.
+      - name: Capture PR Diff
+        id: diff
+        run: |
+          echo "DIFF<<EOF" >> $GITHUB_ENV
+          git fetch origin main
+          git diff origin/main > temp_diff.txt
+          # Limita tamanho do diff para evitar quotas muito grandes
+          head -n 2000 temp_diff.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Gemini AI Review
+        id: gemini
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${{ secrets.AI_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+                  \"prompt\": \"Aja como Engenheiro de Segurança Sênior (DevSecOps). Analise o diff abaixo buscando vulnerabilidades OWASP Top 10, code smells, complexidade ciclomática e melhores práticas Java/Spring Boot. Retorne comentários concisos linha a linha se possível:\\n${DIFF}\",
+                  \"temperature\": 0.5,
+                  \"maxOutputTokens\": 1024
+                }")
+          echo "REVIEW_OUTPUT=$RESPONSE" >> $GITHUB_ENV
+
+      - name: Comment on PR
+        run: |
+          echo "Comentando PR com análise do Gemini..."
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            -d "{\"body\": \"💡 **Gemini AI Code Review:**\n\`\`\`\n${REVIEW_OUTPUT}\n\`\`\`\"}"
