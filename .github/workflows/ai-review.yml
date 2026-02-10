@@ -17,33 +17,33 @@ jobs:
           fetch-depth: 0
 
       - name: Capture PR Diff
-        id: diff
         run: |
-          echo "DIFF<<EOF" >> $GITHUB_ENV
           git fetch origin main
-          git diff origin/main > temp_diff.txt
-          # Limita tamanho do diff para evitar quotas muito grandes
-          head -n 2000 temp_diff.txt >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          git diff origin/main > diff.txt
+          head -n 2000 diff.txt > diff_limited.txt
 
       - name: Gemini AI Review
         id: gemini
         run: |
+          DIFF_JSON=$(jq -R -s '.' diff_limited.txt)  # transforma diff em string JSON segura
           RESPONSE=$(curl -s -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${{ secrets.AI_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d "{
-                  \"prompt\": \"Aja como Engenheiro de Segurança Sênior (DevSecOps). Analise o diff abaixo buscando vulnerabilidades OWASP Top 10, code smells, complexidade ciclomática e melhores práticas Java/Spring Boot. Retorne comentários concisos linha a linha se possível:\\n${DIFF}\",
+                  \"prompt\": \"Aja como Engenheiro de Segurança Sênior (DevSecOps). Analise o diff abaixo buscando vulnerabilidades OWASP Top 10, code smells, complexidade ciclomática e melhores práticas Java/Spring Boot. Retorne comentários concisos:\n$DIFF_JSON\",
                   \"temperature\": 0.5,
                   \"maxOutputTokens\": 1024
                 }")
-          echo "REVIEW_OUTPUT=$RESPONSE" >> $GITHUB_ENV
+          echo "$RESPONSE" > review_output.txt
+          cat review_output.txt
 
       - name: Comment on PR
         run: |
-          echo "Comentando PR com análise do Gemini..."
+          BODY="💡 **Gemini AI Code Review:**\n\`\`\`\n$(cat review_output.txt)\n\`\`\`"
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
-            -d "{\"body\": \"💡 **Gemini AI Code Review:**\n\`\`\`\n${REVIEW_OUTPUT}\n\`\`\`\"}"
+            -d "{\"body\": $(
+              jq -Rn --arg body "$BODY" '$body'
+            )}"
