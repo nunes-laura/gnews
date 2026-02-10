@@ -1,5 +1,6 @@
 package com.gnews.fake.controller;
 
+import com.gnews.fake.domain.Article;
 import com.gnews.fake.dto.ArticlesResponse;
 import com.gnews.fake.service.ArticleService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +11,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v4")
@@ -50,5 +53,13 @@ public class ArticleController {
             @Parameter(description = "To date (ISO 8601)") @RequestParam(required = false) String to,
             @Parameter(description = "API Key") @RequestParam String apikey) {
         return articleService.search(q, lang, country, sortby, from, to, page, max);
+    }
+
+    @GetMapping("/search-by-title")
+    @Operation(summary = "Search by title (VULNERABLE)", description = "ATENÇÃO: Este endpoint contém vulnerabilidade SQL Injection proposital para fins educacionais")
+    public List<Article> searchByTitle(
+            @Parameter(description = "Title to search for") @RequestParam String title,
+            @Parameter(description = "API Key") @RequestParam String apikey) {
+        return articleService.findByTitle(title);
     }
 }
